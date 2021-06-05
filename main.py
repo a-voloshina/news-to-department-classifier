@@ -78,12 +78,19 @@ def crawl_rss():
     for item in soup.find_all('item', recursive=True):
         link = item.find("pdalink").text
         category = item.find("category").text
-        file_name = f"data/rss/{make_file_name(link, ngs_url)}"
+        file_name = f"data/{make_file_name(link, ngs_url)}"
         tags = [category]
         save_new_article(i, file_name, session, link, tags)
         i += 1
 
 
+def crawl_article(article_url, site_prefix, tags):
+    session = requests.Session()
+    url = site_prefix + article_url
+    file_name = f"data/{make_file_name(url, site_prefix)}"
+    save_new_article("single", file_name, session, url, tags)
+
+
 if __name__ == '__main__':
     crawl_problems()
-    # crawl_rss()
+    crawl_rss()
