@@ -59,14 +59,16 @@ def get_article(session, url, file, tags):
         file.write(' | '.join(map(str, tags)) + "\n")
     content = session.get(url).content
     soup = BSoup(content, "html.parser")
-    headline = soup.find('h2', itemprop="headline")
+    headline = soup.find('h1', itemprop="headline")
     file.write(headline.get_text() + "\n")
     alternative_headline = soup.find('p', itemprop="alternativeHeadline")
-    file.write(alternative_headline.get_text() + "\n")
-    article_body = soup.find('div', itemprop="articleBody").find('div')
-    for paragraphs in article_body.find_all(['div', 'p'], recursive=False):
-        for part in paragraphs.find_all(['p', 'span'], recursive=True):
-            file.write(part.get_text() + "\n")
+    if alternative_headline is not None:
+        file.write(alternative_headline.get_text() + "\n")
+    article_body = soup.find('div', itemprop="articleBody")#.find('div')
+    body = article_body.find_all('div', recursive=False)[1]   # TODO: refactor
+    for par in body.find_all('div', recursive=False):
+        for pp in par.find_all('p', recursive=True):
+            file.write(pp.get_text() + "\n")
 
 
 def crawl_rss():
@@ -85,12 +87,16 @@ def crawl_rss():
 
 
 def crawl_article(article_url, site_prefix, tags):
-    session = requests.Session()
-    url = site_prefix + article_url
-    file_name = f"data/{make_file_name(url, site_prefix)}"
-    save_new_article("single", file_name, session, url, tags)
+    try:
+        session = requests.Session()
+        url = site_prefix + article_url
+        file_name = f"data/{make_file_name(url, site_prefix)}"
+        save_new_article("single", file_name, session, url, tags)
+    except AttributeError as err:
+        print(f"Unexpected {err=}, {type(err)=}")
 
 
 if __name__ == '__main__':
+    # crawl_article('/text/relations/2022/04/12/71248121/', ngs_url, ['Страна и мир'])
     crawl_problems()
     crawl_rss()
