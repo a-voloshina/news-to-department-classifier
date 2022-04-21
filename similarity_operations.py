@@ -9,8 +9,9 @@ import gensim
 import logging
 import operator
 import time
-from nltk import wordpunct_tokenize
+# import nltk
 
+from nltk import wordpunct_tokenize
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from pymystem3 import Mystem
@@ -20,28 +21,33 @@ from rake_nltk import Rake
 from keybert import KeyBERT
 
 mystem = Mystem()
-russian_stopwords = stopwords.words("russian")
+# nltk.download('stopwords')
+# nltk.download('punkt')
+russian_stopwords = stopwords.words("russian") + ['это', 'вне', 'который']
 
-departments_stopwords = []
+model_unknown_words = set()
 
 
-# ['организация', 'обеспечение', 'соответствие', 'определение', 'осуществление', 'участие',
-#                          'компетенция', 'комитета', 'aнализ', 'прогнозирование', 'полномочие',
-#                          'деятельность', 'мэрия', 'город', 'новосибирск', 'российская', 'федерация']
+def get_text_from_list(list_text):
+    return " ".join(list_text)
+
+
+def get_list_tokens(text):
+    tokens = mystem.lemmatize(text.lower())
+    return [token for token in tokens if token not in russian_stopwords
+            # and token not in departments_stopwords
+            and token != " "
+            and token.strip() not in punctuation]  # -,
 
 
 def preprocess_text(text):
-    lemmatized_text = mystem.lemmatize(text.lower())
-    # print(tokens)
-    # processed = mystem.analyze(text)
-    # print(processed)
-    tokens = [token for token in lemmatized_text if token not in russian_stopwords
-              # and token not in departments_stopwords
-              and token != " "
-              and token.strip() not in punctuation]
+    tokens = get_list_tokens(text)
+    return list(set(tokens))
 
-    # text = " ".join(tokens)
-    return list(set(tokens))  # text
+
+def tokenize_text(text):
+    tokens = get_list_tokens(text)
+    return get_text_from_list(tokens)
 
 
 mapping = {
@@ -70,7 +76,7 @@ def preprocess_text_tag_mystem(text):
     for token in processed:
         try:
             lemma = token["analysis"][0]["lex"].lower().strip()
-            if lemma not in russian_stopwords:  #and lemma not in departments_stopwords:
+            if lemma not in russian_stopwords:  # and lemma not in departments_stopwords:
                 pos = token["analysis"][0]["gr"].split(',')[0]
                 pos = pos.split('=')[0].strip()
                 if pos in mapping:
@@ -124,6 +130,7 @@ def get_rusvectors_model(model_file_name):
     stream = archive.open('model.bin')
     return gensim.models.KeyedVectors.load_word2vec_format(stream, binary=True)
 
+
 # def get_similarities_for_one_text(text_words, model_name):
 #     result = list()
 #     for word1 in text_words:
@@ -160,7 +167,8 @@ def get_similarities_for_one_department(department1, departments_list, model):
                         similarity = model.similarity(word1, word2)
                         if similarity < 1.0:
                             mid_similarity += similarity
-                    except KeyError as err:
+                    except KeyError:
+                        model_unknown_words.add(word2)
                         continue
                 sum_len += len(department2)
         mid_similarity_result = mid_similarity / sum_len
@@ -175,14 +183,14 @@ def get_similarities_table(departments_list, model):
     for department1 in departments_list:
         similarities = get_similarities_for_one_department(department1, departments_list, model)
         result_table.append(similarities)
-        print(f'Got similarities for {i} department')
+        # print(f'Got similarities for {i} department')
         i += 1
     return result_table
 
 
 def get_departments_keywords(departments_list, model, key_words_count):
     similarities_table = get_similarities_table(departments_list, model)
-    print("Got similarities_table")
+    # print("Got similarities_table")
     result_table = []
     for line in similarities_table:
         result_words = []
@@ -253,6 +261,55 @@ def get_text_department(text_words, deps_map, model_name):
     return sorted(dep_sims.items(), key=lambda item: item[1], reverse=True)
 
 
+def get_most_frequent_words_from_list(splitted_text, words_number):
+    counter = Counter(splitted_text)
+    return counter.most_common(words_number)
+
+
+def get_departments_tasks_texts(departments_texts_path):
+    departments = [f for f in os.listdir(departments_texts_path)
+                   if os.path.isfile(os.path.join(departments_texts_path, f))]
+    departments_tasks_list = []
+    for department in departments:
+        department_file_name = f"{departments_texts_path}/{department}"
+        with open(department_file_name, "r", encoding='utf-8') as department_file:
+            department_tasks = department_file.read().replace('\n', ' ')
+            departments_tasks_list.append(department_tasks)
+    return departments_tasks_list
+
+
+def get_departments_tasks_list(departments_texts_path, add_tags=True):
+    departments = [f for f in os.listdir(departments_texts_path)
+                   if os.path.isfile(os.path.join(departments_texts_path, f))]
+    departments_tasks_list = []
+    for department in departments:
+        department_file_name = f"{departments_texts_path}/{department}"
+        with open(department_file_name, "r", encoding='utf-8') as department_file:
+            department_tasks = department_file.read().replace('\n', ' ')
+            if add_tags:
+                preprocessed_department = preprocess_text_tag_mystem(department_tasks)
+            else:
+                preprocessed_department = preprocess_text(department_tasks)
+            departments_tasks_list.append(preprocessed_department)
+    return departments_tasks_list
+
+
+def get_departments_stopwords(departments_tasks_list, limit):
+    all_text_preprocess = []
+    for department_tasks in departments_tasks_list:
+        all_text_preprocess.extend(department_tasks)
+    most_frequent_words = get_most_frequent_words_from_list(all_text_preprocess, limit)
+    return [x[0] for x in most_frequent_words]
+
+
+def remove_stopwords(departments_tasks_list, stopwords_list):
+    new_departments_tasks = []
+    for department_tasks in departments_tasks_list:
+        new_department_tasks = [word for word in department_tasks if word not in stopwords_list]
+        new_departments_tasks.append(new_department_tasks)
+    return new_departments_tasks
+
+
 def compute_tf(input_text):
     tf_text = Counter(input_text)
     for i in tf_text:
@@ -282,36 +339,33 @@ def compute_tfidf(corpus):
 #         tf_idf_dictionary[word] = computed_tf[word] * compute_idf(word, corpus)
 #     return tf_idf_dictionary
 
-def tf_idf_keywords_extraction():
+def tf_idf_keywords_extraction(departments_list, keywords_count, tuple_elements=False):
     departs_corpus = []
-    building_depart_tasks_processed = preprocess_text(building_and_architecture_depart_tasks)
-    education_depart_tasks_processed = preprocess_text(education_depart_tasks)
-    energy_depart_tasks_processed = preprocess_text(energy_housing_and_communal_services_depart_tasks)
-    industry_depart_tasks_processed = preprocess_text(industry_innovation_and_enterprise_depart_tasks)
-    transport_depart_tasks = preprocess_text(transport_and_road_improvement_complex_depart_tasks)
-    departs_corpus.append(building_depart_tasks_processed)
-    departs_corpus.append(education_depart_tasks_processed)
-    departs_corpus.append(energy_depart_tasks_processed)
-    departs_corpus.append(industry_depart_tasks_processed)
-    departs_corpus.append(transport_depart_tasks)
-    print()
+    for department in departments_list:
+        departs_corpus.append(department)
 
-    keywords_count = 15
+    departments_tf_idf = []
     tf_idf = compute_tfidf(departs_corpus)
-    for elem in tf_idf:
-        sorted_keywords = sorted(elem.items(), key=lambda x: x[1], reverse=True)
-        print(sorted_keywords[:keywords_count])
+    for keywords in tf_idf:
+        sorted_keywords = sorted(keywords.items(), key=lambda x: x[1], reverse=True)
+        if tuple_elements:
+            department_keywords = []
+            for elem in sorted_keywords[:keywords_count]:
+                department_keywords.append(elem[0])
+            departments_tf_idf.append(department_keywords)
+        else:
+            departments_tf_idf.append(sorted_keywords)
+    return departments_tf_idf
 
 
 def rake_keywords_extraction(tokenized_text):
-    r = Rake(russian_stopwords + ['это', 'вне', 'который'])
+    r = Rake(russian_stopwords)
     r.extract_keywords_from_text(tokenized_text)
     # return r.get_ranked_phrases()
     return r.get_ranked_phrases_with_scores()
 
 
 def yake_keywords_extraction(text, keywords_count):
-    # kw_extractor = yake.KeywordExtractor()
     language = "rus"
     max_ngram_size = 1
     deduplication_threshold = 0.9
@@ -326,143 +380,113 @@ def keybert_keywords_extraction(text):
     return keywords
 
 
-def tokenize_text(text):
-    # tokens = text.split()
-    tokens = mystem.lemmatize(text.lower())
-    # print(tokens)
-    tokens = [token for token in tokens if token not in russian_stopwords
-              # and token not in departments_stopwords
-              and token != " "
-              and token.strip() not in punctuation]
-
-    return " ".join(tokens)
-
-
-def get_most_frequent_words(text, words_number):
-    counter = Counter(text.split())
-    return counter.most_common(words_number)
-
-
-def get_most_frequent_words_from_list(splitted_text, words_number):
-    counter = Counter(splitted_text)
-    return counter.most_common(words_number)
-
-
-def get_departments_tasks_list(departments_texts_path):
-    departments = [f for f in os.listdir(departments_texts_path)
-                   if os.path.isfile(os.path.join(departments_texts_path, f))]
-    departments_tasks_list = []
-    for department in departments:
-        department_file_name = f"{departments_texts_path}/{department}"
-        with open(department_file_name, "r", encoding='utf-8') as department_file:
-            department_tasks = department_file.read().replace('\n', ' ')
-            preprocessed_department = preprocess_text_tag_mystem(department_tasks)
-            departments_tasks_list.append(preprocessed_department)
-    return departments_tasks_list
-
-
-def get_departments_stopwords(departments_tasks_list, limit):
-    all_text_preprocess = []
-    for department_tasks in departments_tasks_list:
-        all_text_preprocess.extend(department_tasks)
-    most_frequent_words = get_most_frequent_words_from_list(all_text_preprocess, limit)
-    return [x[0] for x in most_frequent_words]
-
-
-def remove_stopwords(departments_tasks_list, stopwords_list):
-    new_departments_tasks = []
-    for department_tasks in departments_tasks_list:
-        new_department_tasks = [word for word in department_tasks if word not in stopwords_list]
-        new_departments_tasks.append(new_department_tasks)
-    return new_departments_tasks
+def print_departments_keywords(departments_keywords):
+    i = 1
+    for department_keywords in departments_keywords:
+        print(f'department {i} keywords: {department_keywords}')
+        i += 1
 
 
 if __name__ == '__main__':
-    start = time.time()
     logging.basicConfig(format='%(asctime)s : %(levelname)s : %(message)s', level=logging.INFO)
-    model = get_rusvectors_model("./model/182.zip")
+    model_name = "ruwikiruscorpora_upos_cbow_300_10_2021"
+    # #"ruwikiruscorpora_upos_skipgram_300_2_2019" #"news_upos_skipgram_300_5_2019"
+    model = get_rusvectors_model(f"./model/{model_name}.zip")
+    departments_texts_path = ".\departments"
+    stopwords_count = 15
+    departments_keywords_count = 10
 
-    departments = get_departments_tasks_list(".\departments")
-    departments_stopwords = get_departments_stopwords(departments, 15)
+    departments = get_departments_tasks_list(departments_texts_path)
+    departments_stopwords = get_departments_stopwords(departments, stopwords_count)
     departments = remove_stopwords(departments, departments_stopwords)
-    print(get_departments_keywords(departments, model, 10))
+
+    start = time.time()
+    custom_keywords = get_departments_keywords(departments, model, departments_keywords_count)
     end = time.time()
-    print(f'departments keywords got {end - start} sec')
+    print_departments_keywords(custom_keywords)
+    print(f'custom departments keywords got {end - start} sec')
+    # print(f'model {model_name} unknown words count: {len(model_unknown_words)}')
+    # print(model_unknown_words)
 
-    # model = gensim.models.KeyedVectors.load_word2vec_format('ruwikiruscorpora_upos_cbow_300_20_2017.bin.gz',
-    #                                                         binary=True)
-    # model_name = 'geowac_lemmas_none_fasttextskipgram_300_5_2020'
-    # compare_result = compare_files('departments/education-tasks.txt', 'departments/building-and-architecture-tasks.txt',
-    #                                model_name, 10)
-    # print(compare_result)
+    print('YAKE')
+    departments_texts = get_departments_tasks_list(departments_texts_path, add_tags=False)
+    departments_texts_stopwords = get_departments_stopwords(departments_texts, stopwords_count)
+    departments_texts = remove_stopwords(departments_texts, departments_stopwords)
 
-    # print('YAKE')
-    # building_text = tokenize_text(building_and_architecture_depart_tasks)
-    # education_text = tokenize_text(education_depart_tasks)
-    # energy_text = tokenize_text(energy_housing_and_communal_services_depart_tasks)
-    # industry_text = tokenize_text(industry_innovation_and_enterprise_depart_tasks)
-    # transport_text = tokenize_text(transport_and_road_improvement_complex_depart_tasks)
-    # building_keywords = sorted(yake_keywords_extraction(building_text, 15))
-    # print(building_keywords)
-    # education_keywords = sorted(yake_keywords_extraction(education_text, 15))
-    # print(education_keywords)
-    # energy_keywords = sorted(yake_keywords_extraction(energy_text, 15))
-    # print(energy_keywords)
-    # industry_keywords = sorted(yake_keywords_extraction(industry_text, 15))
-    # print(industry_keywords)
-    # transport_keywords = sorted(yake_keywords_extraction(transport_text, 15))
-    # print(transport_keywords)
-    # print()
+    i = 1
+    yake_start = time.time()
+    for department in departments_texts:
+        department_text = get_text_from_list(department)
+        yake_keywords = sorted(yake_keywords_extraction(department_text, departments_keywords_count))
+        keywords = []
+        for keyword in yake_keywords:
+            keywords.append(keyword[0])
+        print(f'department {i} keywords: {keywords}')
+        i += 1
+    yake_end = time.time()
+    print(f'yake departments keywords got {yake_end - yake_start} sec')
 
-    # with open('article.txt', encoding='utf-8', mode='r') as file:
-    #     test_text = file.read()
-    #     sims = get_text_department(preprocess_text_tag_mystem(test_text),
-    #                         {'building': preprocess_keywords_tag_mystem(building_keywords),
-    #                          'education': preprocess_keywords_tag_mystem(education_keywords),
-    #                          'energy': preprocess_keywords_tag_mystem(energy_keywords),
-    #                          'industry': preprocess_keywords_tag_mystem(industry_keywords),
-    #                          'transport': preprocess_keywords_tag_mystem(transport_keywords)
-    #                          }, model_name)
-    #     print(sims)
-    # preprocess_result = preprocess_text_tag_mystem(test_text)
-    # print(preprocess_result)
-    # print(list(preprocess_result.keys()))
+    print('TF-IDF')
+    tf_idf_start = time.time()
+    tf_idf_keywords = tf_idf_keywords_extraction(departments_texts, departments_keywords_count, tuple_elements=True)
+    tf_idf_end = time.time()
+    print_departments_keywords(tf_idf_keywords)
+    print(f'tf-idf departments keywords got {tf_idf_end - tf_idf_start} sec')
+    print()
 
-    # print('TF-IDF')
-    # tf_idf_keywords_extraction()
-    # print()
-
-    # print('RAKE')
+    print('RAKE')
     # print(rake_keywords_extraction(preprocess_result))
-    # education_preprocess = wordpunct_tokenize(education_depart_tasks) #' '.join([word for word in (education_depart_tasks.split())
-    #                                  if word not in punctuation])0
+    # education_preprocess = wordpunct_tokenize(education_depart_tasks)
+    # ' '.join([word for word in (education_depart_tasks.split()) if word not in punctuation])
     # print(education_preprocess)
     # print(rake_keywords_extraction(education_depart_tasks))
     # print(rake_keywords_extraction(tokenize_text(building_and_architecture_depart_tasks)))
-    # print()
+    rake_start = time.time()
+    rake_keywords = []
+    for department in departments_texts:
+        department_text = get_text_from_list(department)
+        rake_keywords.append(rake_keywords_extraction(department_text))
+    rake_end = time.time()
+    print_departments_keywords(rake_keywords)
+    print(f'rake departments keywords got {rake_end - rake_start} sec')
+    print()
 
-    # print('TextRank')
-    # building_text_preprocess = ' '.join(preprocess_text(building_and_architecture_depart_tasks))
-    # education_text_preprocess = ' '.join(preprocess_text(education_depart_tasks))
-    # energy_text_preprocess = ' '.join(preprocess_text(energy_housing_and_communal_services_depart_tasks))
-    # industry_text_preprocess = ' '.join(preprocess_text(industry_innovation_and_enterprise_depart_tasks))
-    # transport_text_preprocess = ' '.join(preprocess_text(transport_and_road_improvement_complex_depart_tasks))
-    # print(summa.keywords.keywords(building_text_preprocess))
-    # print()
-    # print()
-    # print(summa.keywords.keywords(education_text_preprocess))
-    # print()
-    # print(summa.keywords.keywords(energy_text_preprocess))
-    # print()
-    # print(summa.keywords.keywords(industry_text_preprocess))
-    # print()
-    # print(summa.keywords.keywords(transport_text_preprocess))
-    # print(summa.keywords.keywords(building_and_architecture_depart_tasks))
-    # print()
+    print('TextRank')
+    text_rank_keywords = []
+    text_rank_start = time.time()
+    for department in departments_texts:
+        department_text = get_text_from_list(department)
+        text_rank_keywords.append(summa.keywords.keywords(department_text))
+    text_rank_end = time.time()
+    print_departments_keywords(text_rank_keywords)
+    print(f'text rank departments keywords got {text_rank_end - text_rank_start} sec')
+    print()
 
-    # print('KeyBERT')
-    # print(keybert_keywords_extraction(building_and_architecture_depart_tasks))
-    # print(keybert_keywords_extraction(education_depart_tasks))
-    # print(keybert_keywords_extraction(energy_housing_and_communal_services_depart_tasks))
-    # print(keybert_keywords_extraction(industry_innovation_and_enterprise_depart_tasks))
-    # print(keybert_keywords_extraction(transport_and_road_improvement_complex_depart_tasks))
+    print('KeyBERT')
+    keybert_keywords = []
+    keybert_start = time.time()
+    for department in departments_texts:
+        department_text = get_text_from_list(department)
+        department_keywords = keybert_keywords_extraction(department_text)
+        department_keywords_alone = []
+        for tuple_word in department_keywords:
+            department_keywords_alone.append(tuple_word[0])
+        keybert_keywords.append(department_keywords_alone)
+    keybert_end = time.time()
+    print_departments_keywords(keybert_keywords)
+    print(f'keybert departments keywords got {keybert_end - keybert_start} sec')
+    print()
+
+    departments_tasks_raw = get_departments_tasks_texts(departments_texts_path)
+    keybert_keywords = []
+    keybert_start = time.time()
+    for department in departments_tasks_raw:
+        department_keywords = keybert_keywords_extraction(department)
+        department_keywords_alone = []
+        for tuple_word in department_keywords:
+            department_keywords_alone.append(tuple_word[0])
+        keybert_keywords.append(department_keywords_alone)
+    keybert_end = time.time()
+    print_departments_keywords(keybert_keywords)
+    print(f'keybert departments keywords got {keybert_end - keybert_start} sec')
+    print()
